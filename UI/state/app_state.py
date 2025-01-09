@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 import streamlit as st
 from datetime import datetime
@@ -13,7 +13,7 @@ class ArticleState:
 
 @dataclass
 class QuizState:
-    questions: List[Dict] = None
+    questions: List[Dict] = field(default_factory=list)
     current_question: int = 0
     is_generated: bool = False
 
