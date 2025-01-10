@@ -237,7 +237,7 @@ Return the adapted text in Markdown format."""},
 IMPORTANT: Make sure to use double quotes for strings and escape special characters properly!"""},
                     {"role": "user", "content": f"Generate {questions_count} questions based on this text:\n\n{text}"}
                 ],
-                temperature=0.7
+                temperature=1
             )
             
             if not response or not response.choices:

@@ -148,7 +148,9 @@ class QuizListView:
                     ["All Levels", "A1", "A2", "B1", "B2", "C1", "C2", "original"]
                 )
             with col2:
-                st.text_input("🔍 Search quizzes", placeholder="Enter quiz title...")
+                search_query = st.text_input("🔍 Search quizzes", 
+                                           placeholder="Enter quiz title...",
+                                           key="quiz_search")
             
             st.markdown("---")
             
@@ -161,6 +163,11 @@ class QuizListView:
             # Apply level filter if not "All Levels"
             if level_filter != "All Levels":
                 query = query.eq("language_level", level_filter.lower())
+                
+            # Apply search filter if search query is not empty
+            if search_query:
+                # Используем ilike для поиска без учета регистра
+                query = query.ilike("title", f"%{search_query}%")
                 
             # Get total count for pagination
             count_result = query.execute()

@@ -3,6 +3,9 @@ from typing import Dict, List, Optional
 from ..services.quiz_service import QuizService
 from ..state.app_state import AppState
 from ..utils.async_utils import async_handler
+import logging
+
+logger = logging.getLogger(__name__)
 
 class QuizView:
     """Component for displaying a quiz"""
@@ -10,6 +13,7 @@ class QuizView:
     def __init__(self, quiz_service: QuizService, supabase=None):
         self.quiz_service = quiz_service
         self.supabase = supabase
+        logger.info(f"QuizView initialized with quiz_service: {quiz_service}")
     
     def show_question(self, question: Dict, index: int, prefix: str = ""):
         """Display a single question"""
@@ -19,7 +23,8 @@ class QuizView:
             
             with col1:
                 # Combine number with question
-                st.write(f"**{index + 1}. {question.get('question')}**")
+                question_text = question.get('question_text') or question.get('question')
+                st.write(f"**{index + 1}. {question_text}**")
                 
                 # Display answer options
                 options = question.get("options", [])
@@ -83,7 +88,7 @@ class QuizView:
                 formatted_questions = []
                 for q in questions_result.data:
                     formatted_question = {
-                        'question': q.get('question_text', 'No question'),
+                        'question_text': q.get('question_text', 'No question'),
                         'correct_answer': q.get('correct_answer', ''),
                         'options': q.get('options', [])
                     }
@@ -102,25 +107,70 @@ class QuizView:
     @async_handler
     async def _regenerate_question(self, index: int):
         """Regenerate a single question"""
-        article = st.session_state.article
-        quiz = st.session_state.quiz
-        
-        if not article.content:
-            st.error("No text available for regeneration")
-            return
-            
         try:
-            new_question = await self.quiz_service.regenerate_question(
-                article.content,
-                index,
-                quiz.questions,
-                article.language_level
-            )
-            if new_question:
-                quiz.questions[index] = new_question
-                st.success("Question regenerated successfully!")
+            logger.info(f"Starting regeneration for question {index}")
+            # Если это существующий тест, загружаем его заново для получения текста статьи
+            if st.session_state.selected_test:
+                logger.info(f"Loading test {st.session_state.selected_test}")
+                test_data = self.load_test(st.session_state.selected_test)
+                if not test_data:
+                    st.error("Не удалось загрузить тест")
+                    return
+                article_text = test_data.get('article_text')
+                logger.info(f"Got article text, length: {len(article_text) if article_text else 0}")
+            else:
+                article_text = st.session_state.article.content
+                logger.info("Using article text from session state")
+            
+            if not article_text:
+                st.error("Нет текста для регенерации вопроса")
+                return
+            
+            logger.info("Calling quiz_service.regenerate_question")
+            with st.spinner("Регенерация вопроса..."):
+                new_question = await self.quiz_service.regenerate_question(
+                    article_text,
+                    index,
+                    st.session_state.quiz.questions,
+                    st.session_state.article.language_level
+                )
+                logger.info(f"Got new question: {new_question}")
+                if new_question:
+                    # Обновляем вопрос в state
+                    st.session_state.quiz.questions[index] = {
+                        "question_text": new_question["question"],
+                        "options": new_question["options"],
+                        "correct_answer": new_question["correct_answer"]
+                    }
+                    # Если есть test_id, обновляем вопрос в базе данных
+                    if st.session_state.selected_test:
+                        try:
+                            # Получаем id вопроса из базы данных
+                            questions_result = self.supabase.table("questions")\
+                                .select("id")\
+                                .eq("test_id", st.session_state.selected_test)\
+                                .order("order_number")\
+                                .execute()
+                            
+                            if questions_result and questions_result.data:
+                                question_id = questions_result.data[index]["id"]
+                                # Обновляем вопрос в базе данных
+                                self.supabase.table("questions")\
+                                    .update({
+                                        "question_text": new_question["question"],
+                                        "options": json.dumps(new_question["options"]),
+                                        "correct_answer": new_question["correct_answer"]
+                                    })\
+                                    .eq("id", question_id)\
+                                    .execute()
+                        except Exception as e:
+                            st.error(f"Ошибка при обновлении вопроса в базе данных: {str(e)}")
+                            return
+                    
+                    st.success("Вопрос успешно обновлен!")
+                    st.experimental_rerun()
         except Exception as e:
-            st.error(f"Failed to regenerate question: {str(e)}")
+            st.error(f"Ошибка при регенерации вопроса: {str(e)}")
     
     def _show_regenerate_button(self, index: int, prefix: str):
         """Display the regenerate button"""
@@ -133,8 +183,13 @@ class QuizView:
         
         if st.button("🔄", key=button_key, 
                     help="Regenerate this question"):
+            logger.info(f"Regenerate button clicked for question {index}")
+            if not self.quiz_service:
+                logger.error("quiz_service is None!")
+                st.error("Quiz service not initialized!")
+                return
             self._regenerate_question(index)
-
+    
     @async_handler
     async def _save_quiz(self):
         """Save the quiz"""

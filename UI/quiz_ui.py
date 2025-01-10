@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 def show_tests_tab(supabase, ai_service=None):
     """Show teacher's tests tab"""
     try:
+        logger.info(f"show_tests_tab called with ai_service: {ai_service}")
         # Инициализируем состояние, если его нет
         if 'selected_test' not in st.session_state:
             st.session_state.selected_test = None
@@ -19,14 +20,19 @@ def show_tests_tab(supabase, ai_service=None):
 
         # Если выбран тест для просмотра/редактирования
         if st.session_state.selected_test:
+            logger.info(f"Selected test: {st.session_state.selected_test}")
             # Кнопка возврата к списку
             if st.button("← Back to Tests"):
                 st.session_state.selected_test = None
                 st.session_state.edit_mode = False
                 st.rerun()
             
+            # Включаем режим редактирования
+            st.session_state.edit_mode = True
+            
             # Показываем выбранный тест
             quiz_service = QuizService(ai_service) if ai_service else None
+            logger.info(f"Created QuizService: {quiz_service}")
             quiz_view = QuizView(quiz_service, supabase)
             quiz_view.show_quiz()
         else:

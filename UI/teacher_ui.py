@@ -5,6 +5,7 @@ import os
 from typing import Dict, List
 from .components.article_view import ArticleView
 from .components.quiz_view import QuizView
+from .components.results_view import show_results_tab
 from .services.quiz_service import QuizService
 from .state.app_state import AppState
 from .utils.async_utils import async_handler
@@ -35,11 +36,15 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 def init_services():
-    """Initialize AI service and Supabase client"""
+    """Initialize AI service, Quiz service and Supabase client"""
     try:
         # Initialize AI service
         ai_service = AIService()
         logger.info("AI service initialized")
+        
+        # Initialize Quiz service
+        quiz_service = QuizService(ai_service)
+        logger.info("Quiz service initialized")
         
         # Initialize Supabase client
         url = os.getenv("SUPABASE_URL")
@@ -49,7 +54,7 @@ def init_services():
         supabase = create_client(url, key)
         logger.info("Supabase client initialized")
         
-        return ai_service, supabase
+        return ai_service, quiz_service, supabase
     except Exception as e:
         logger.error(f"Failed to initialize services: {str(e)}", exc_info=True)
         raise
@@ -65,13 +70,13 @@ def teacher_ui():
         )
         
         # Initialize services
-        ai_service, supabase = init_services()
+        ai_service, quiz_service, supabase = init_services()
         
         # Initialize session state
         AppState.init_session_state()
         
         # Create tabs
-        tab1, tab2 = st.tabs(["Create Quiz", "My Quizzes"])
+        tab1, tab2, tab3 = st.tabs(["Create Quiz", "My Quizzes", "Results"])
         
         with tab1:
             st.title("Create Quiz")
@@ -99,49 +104,42 @@ def teacher_ui():
                 st.header("Article History")
                 history = get_article_history(supabase)
                 
-                for article in history:
-                    if article:
-                        with st.expander(article.get('title', 'Untitled')):
-                            st.write(f"Level: {article.get('language_level', 'original')}")
-                            st.write(f"Date: {article.get('created_at', '').split('T')[0]}")
-                            
-                            if st.button("Use This Article", key=f"use_{article['id']}"):
-                                article_text = article.get('content')
-                                if article_text:
-                                    AppState.update_article(
-                                        content=article_text,
-                                        url=article.get('url'),
-                                        level=article.get('language_level', 'original'),
-                                        title=article.get('title')
-                                    )
-                                    st.session_state.show_article = True
-                                    st.session_state.article_expanded = True
+                if history:
+                    for article in history:
+                        if st.button(article["title"], key=article["id"]):
+                            article_data = get_article_by_id(supabase, article["id"])
+                            if article_data:
+                                st.session_state.article = article_data
+                                st.experimental_rerun()
             
-            # Main content area
-            url = st.text_input("Article URL")
-            
-            if url:
-                if st.button("Load and Process Article"):
-                    process_article(ai_service, supabase, url, language_level)
-            
-            # Show article if it's loaded
-            if st.session_state.get('show_article', False):
+            # Main content area for article URL input and processing
+            url = st.text_input("Enter article URL", key="article_url")
+            if url and st.button("Process Article", key="process_btn"):
+                process_article(ai_service, supabase, url, language_level)
+                
+            # Show article content if it exists
+            if "article" in st.session_state:
+                article = st.session_state.article
                 article_view = ArticleView(
+                    supabase=supabase,
                     on_generate_quiz=lambda: generate_quiz(ai_service, questions_count)
                 )
-                article_view.show_article(st.session_state.article)
-            
-            # Show quiz if it's generated
-            if st.session_state.quiz.is_generated:
-                quiz_view = QuizView(QuizService(ai_service), supabase)
-                quiz_view.show_quiz()
+                article_view.show_article(article)
+                
+                # Show quiz if generated
+                if st.session_state.quiz.is_generated:
+                    quiz_view = QuizView(quiz_service, supabase)
+                    quiz_view.show_quiz()
         
         with tab2:
             show_tests_tab(supabase, ai_service)
             
+        with tab3:
+            show_results_tab(supabase)
+            
     except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        logging.error(f"Error in teacher UI: {str(e)}", exc_info=True)
+        logger.error("Error in teacher UI:", exc_info=True)
+        st.error(f"Error in teacher UI: {str(e)}")
 
 @async_handler
 async def process_article(ai_service, supabase, url: str, language_level: str):
